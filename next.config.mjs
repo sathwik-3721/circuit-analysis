@@ -9,6 +9,9 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  experimental: {
+    ppr: 'incremental', // Enabled Partial Prerendering
+  },
 }
 
 export default nextConfig

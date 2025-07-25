@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useCallback, useRef, useMemo } from "react"
+import { useState, useCallback, useRef, useMemo, Suspense } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -11,6 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { FileUp, Search, Download, CheckCircle, XCircle, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { useToast } from "@/hooks/use-toast"
+import { Skeleton } from "@/components/ui/skeleton"
+
+// Enable Partial Prerendering for this route
+export const experimental_ppr = true
 
 interface VendorOption {
   id: string
@@ -152,6 +156,27 @@ const mockApi = {
   },
 }
 
+// Loading Skeleton Component for dynamic content
+function LoadingSkeleton() {
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="text-miracle-mediumBlue">Loading Data...</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col items-center justify-center py-8">
+        <Loader2 className="w-12 h-12 text-miracle-lightBlue animate-spin mb-4" />
+        <p className="text-lg font-medium text-miracle-black">Preparing recognized components and vendor options.</p>
+        <p className="text-sm text-miracle-darkGrey mt-2">This might take a moment.</p>
+        <div className="mt-6 w-full space-y-3">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-full" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function EngineerBuyerUI() {
   const { toast } = useToast()
   const [currentStep, setCurrentStep] = useState<Step>(Step.Upload)
@@ -165,6 +190,7 @@ export default function EngineerBuyerUI() {
   const [searchTerm, setSearchTerm] = useState("")
   const [filterType, setFilterType] = useState("all")
   const [quotationSummary, setQuotationSummary] = useState<QuotationSummary | null>(null)
+  const [showDynamicContent, setShowDynamicContent] = useState(false) // New state for controlling the 5-second delay
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -206,7 +232,8 @@ export default function EngineerBuyerUI() {
     setComponents([])
     setUploadId(null)
     setQuotationSummary(null)
-    setCurrentStep(Step.Upload) // Ensure we are on the upload screen for progress
+    setCurrentStep(Step.Upload)
+    setShowDynamicContent(false) // Ensure dynamic content is hidden initially
 
     try {
       const uploadResponse = await mockApi.uploadFile(file)
@@ -226,15 +253,25 @@ export default function EngineerBuyerUI() {
         if (status.status === "completed") {
           clearInterval(pollInterval)
           statusCompleted = true
-          const fetchedComponents = await mockApi.getComponents(uploadResponse.uploadId)
-          setComponents(fetchedComponents)
-          setCurrentStep(Step.Recognition)
-          setIsProcessing(false)
+          setIsProcessing(false) // Processing is done, now waiting for display delay
           toast({
             title: "Processing Complete",
-            description: "Components recognized successfully!",
+            description: "Components recognized successfully! Displaying data shortly...",
             variant: "default",
           })
+
+          // Introduce the 5-second delay here before fetching and displaying components
+          setTimeout(async () => {
+            const fetchedComponents = await mockApi.getComponents(uploadResponse.uploadId) // This has its own 2s delay
+            setComponents(fetchedComponents)
+            setCurrentStep(Step.Recognition) // Move to recognition step
+            setShowDynamicContent(true) // Now show dynamic content
+            toast({
+              title: "Data Ready",
+              description: "Your recognized components are now displayed.",
+              variant: "default",
+            })
+          }, 5000) // 5-second delay
         } else if (status.status === "failed") {
           clearInterval(pollInterval)
           setIsProcessing(false)
@@ -243,11 +280,12 @@ export default function EngineerBuyerUI() {
             description: "Failed to recognize components. Please try again.",
             variant: "destructive",
           })
-          setCurrentStep(Step.Upload) // Go back to upload on failure
+          setCurrentStep(Step.Upload)
+          setShowDynamicContent(false) // Ensure dynamic content remains hidden
         }
       }, 500) // Poll every 0.5 seconds
 
-      // Fallback to stop polling if it takes too long (e.g., 10 seconds)
+      // Fallback to stop polling if it takes too long (e.g., 15 seconds, accounting for the 5s delay + 2s getComponents)
       setTimeout(() => {
         if (!statusCompleted) {
           clearInterval(pollInterval)
@@ -258,8 +296,9 @@ export default function EngineerBuyerUI() {
             variant: "destructive",
           })
           setCurrentStep(Step.Upload)
+          setShowDynamicContent(false)
         }
-      }, 10000)
+      }, 15000)
     } catch (error: any) {
       setIsProcessing(false)
       toast({
@@ -268,6 +307,7 @@ export default function EngineerBuyerUI() {
         variant: "destructive",
       })
       setCurrentStep(Step.Upload)
+      setShowDynamicContent(false)
     }
   }
 
@@ -310,6 +350,7 @@ export default function EngineerBuyerUI() {
     setFilterType("all")
     setQuotationSummary(null)
     setCurrentStep(Step.Upload)
+    setShowDynamicContent(false) // Reset dynamic content visibility
   }
 
   const filteredComponents = useMemo(() => {
@@ -391,7 +432,7 @@ export default function EngineerBuyerUI() {
               {files.length > 0 && <div className="mt-4 text-sm text-miracle-darkGrey">Selected: {files[0]?.name}</div>}
             </div>
 
-            {isProcessing && (
+            {isProcessing && ( // Show progress bars only when processing is active
               <div className="mt-6 space-y-4">
                 <div>
                   <p className="text-sm font-medium mb-2 text-miracle-black">OCR Process</p>
@@ -405,7 +446,7 @@ export default function EngineerBuyerUI() {
                 </div>
                 <div className="flex items-center justify-center text-miracle-mediumBlue">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  <span>Processing...</span>
+                  <span>Processing document...</span>
                 </div>
               </div>
             )}
@@ -413,261 +454,284 @@ export default function EngineerBuyerUI() {
         </Card>
       )}
 
-      {currentStep === Step.Recognition && components.length > 0 && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle className="text-miracle-mediumBlue">Recognized Components</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col md:flex-row gap-4 mb-4">
-              <Input
-                type="text"
-                placeholder="Search components..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="flex-1 border-miracle-lightGrey focus:border-miracle-lightBlue"
-                icon={<Search className="h-4 w-4 text-miracle-darkGrey" />}
-              />
-              <Select value={filterType} onValueChange={setFilterType}>
-                <SelectTrigger className="w-full md:w-[180px] border-miracle-lightGrey focus:border-miracle-lightBlue">
-                  <SelectValue placeholder="Filter by Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {uniqueComponentTypes.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {type === "all" ? "All Types" : type}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+      {/* Dynamic content section, controlled by showDynamicContent and currentStep */}
+      {currentStep !== Step.Upload && (
+        <Suspense fallback={<LoadingSkeleton />}>
+          {showDynamicContent ? (
+            <>
+              {currentStep === Step.Recognition && components.length > 0 && (
+                <Card className="mb-6">
+                  <CardHeader>
+                    <CardTitle className="text-miracle-mediumBlue">Recognized Components</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col md:flex-row gap-4 mb-4">
+                      <Input
+                        type="text"
+                        placeholder="Search components..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="flex-1 border-miracle-lightGrey focus:border-miracle-lightBlue"
+                        icon={<Search className="h-4 w-4 text-miracle-darkGrey" />}
+                      />
+                      <Select value={filterType} onValueChange={setFilterType}>
+                        <SelectTrigger className="w-full md:w-[180px] border-miracle-lightGrey focus:border-miracle-lightBlue">
+                          <SelectValue placeholder="Filter by Type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {uniqueComponentTypes.map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {type === "all" ? "All Types" : type}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-miracle-lightGrey">
-                    <TableHead className="w-[100px] text-miracle-black">Identifier</TableHead>
-                    <TableHead className="w-[100px] text-miracle-black">Type</TableHead>
-                    <TableHead className="text-miracle-black">Value</TableHead>
-                    <TableHead className="text-miracle-black">Tolerance</TableHead>
-                    <TableHead className="min-w-[250px] text-miracle-black">Vendor Options</TableHead>
-                    <TableHead className="w-[120px] text-right text-miracle-black">Datasheet</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredComponents.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="h-24 text-center text-miracle-darkGrey">
-                        No components found matching your criteria.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredComponents.map((component) => {
-                      const selectedVendor = component.vendorOptions.find(
-                        (vendor) => vendor.id === component.selectedVendorId,
-                      )
-                      const isUnavailable = selectedVendor?.availability === "Out of Stock"
-                      return (
-                        <TableRow key={component.id} className={isUnavailable ? "bg-miracle-red/10" : ""}>
-                          <TableCell className="font-medium text-miracle-black">{component.identifier}</TableCell>
-                          <TableCell className="text-miracle-black">{component.type}</TableCell>
-                          <TableCell className="text-miracle-black">{component.value}</TableCell>
-                          <TableCell className="text-miracle-black">{component.tolerance}</TableCell>
-                          <TableCell>
-                            {component.vendorOptions.length > 0 ? (
-                              <Select
-                                value={component.selectedVendorId}
-                                onValueChange={(value) => handleVendorSelection(component.id, value)}
-                              >
-                                <SelectTrigger
-                                  className={`w-full ${isUnavailable ? "border-miracle-red text-miracle-red" : "border-miracle-lightGrey"}`}
-                                >
-                                  <SelectValue placeholder="Select Vendor" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {component.vendorOptions.map((vendor) => (
-                                    <SelectItem
-                                      key={vendor.id}
-                                      value={vendor.id}
-                                      className={vendor.availability === "Out of Stock" ? "text-miracle-red" : ""}
-                                    >
-                                      {vendor.name} - ${vendor.price.toFixed(2)} ({vendor.availability})
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <span className="text-miracle-darkGrey text-sm">No vendors available</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {selectedVendor?.datasheetUrl ? (
-                              <Link href={selectedVendor.datasheetUrl} target="_blank" rel="noopener noreferrer">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="border-miracle-lightBlue text-miracle-lightBlue hover:bg-miracle-lightBlue hover:text-miracle-white bg-transparent"
-                                >
-                                  <Download className="h-4 w-4 mr-2" /> PDF
-                                </Button>
-                              </Link>
-                            ) : (
-                              <span className="text-miracle-darkGrey text-sm">N/A</span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="flex justify-between mt-6">
-              <Button
-                onClick={() => setCurrentStep(Step.Upload)}
-                variant="outline"
-                className="border-miracle-darkBlue text-miracle-darkBlue hover:bg-miracle-darkBlue hover:text-miracle-white"
-              >
-                Back to Upload
-              </Button>
-              <Button
-                onClick={() => setCurrentStep(Step.Review)}
-                className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white"
-              >
-                Review Quotation
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-miracle-lightGrey">
+                            <TableHead className="w-[100px] text-miracle-black">Identifier</TableHead>
+                            <TableHead className="w-[100px] text-miracle-black">Type</TableHead>
+                            <TableHead className="text-miracle-black">Value</TableHead>
+                            <TableHead className="text-miracle-black">Tolerance</TableHead>
+                            <TableHead className="min-w-[250px] text-miracle-black">Vendor Options</TableHead>
+                            <TableHead className="w-[120px] text-right text-miracle-black">Datasheet</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredComponents.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={6} className="h-24 text-center text-miracle-darkGrey">
+                                No components found matching your criteria.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            filteredComponents.map((component) => {
+                              const selectedVendor = component.vendorOptions.find(
+                                (vendor) => vendor.id === component.selectedVendorId,
+                              )
+                              const isUnavailable = selectedVendor?.availability === "Out of Stock"
+                              return (
+                                <TableRow key={component.id} className={isUnavailable ? "bg-miracle-red/10" : ""}>
+                                  <TableCell className="font-medium text-miracle-black">
+                                    {component.identifier}
+                                  </TableCell>
+                                  <TableCell className="text-miracle-black">{component.type}</TableCell>
+                                  <TableCell className="text-miracle-black">{component.value}</TableCell>
+                                  <TableCell className="text-miracle-black">{component.tolerance}</TableCell>
+                                  <TableCell>
+                                    {component.vendorOptions.length > 0 ? (
+                                      <Select
+                                        value={component.selectedVendorId}
+                                        onValueChange={(value) => handleVendorSelection(component.id, value)}
+                                      >
+                                        <SelectTrigger
+                                          className={`w-full ${isUnavailable ? "border-miracle-red text-miracle-red" : "border-miracle-lightGrey"}`}
+                                        >
+                                          <SelectValue placeholder="Select Vendor" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {component.vendorOptions.map((vendor) => (
+                                            <SelectItem
+                                              key={vendor.id}
+                                              value={vendor.id}
+                                              className={
+                                                vendor.availability === "Out of Stock" ? "text-miracle-red" : ""
+                                              }
+                                            >
+                                              {vendor.name} - ${vendor.price.toFixed(2)} ({vendor.availability})
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    ) : (
+                                      <span className="text-miracle-darkGrey text-sm">No vendors available</span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {selectedVendor?.datasheetUrl ? (
+                                      <Link
+                                        href={selectedVendor.datasheetUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="border-miracle-lightBlue text-miracle-lightBlue hover:bg-miracle-lightBlue hover:text-miracle-white bg-transparent"
+                                        >
+                                          <Download className="h-4 w-4 mr-2" /> PDF
+                                        </Button>
+                                      </Link>
+                                    ) : (
+                                      <span className="text-miracle-darkGrey text-sm">N/A</span>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="flex justify-between mt-6">
+                      <Button
+                        onClick={() => setCurrentStep(Step.Upload)}
+                        variant="outline"
+                        className="border-miracle-darkBlue text-miracle-darkBlue hover:bg-miracle-darkBlue hover:text-miracle-white"
+                      >
+                        Back to Upload
+                      </Button>
+                      <Button
+                        onClick={() => setCurrentStep(Step.Review)}
+                        className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white"
+                      >
+                        Review Quotation
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
-      {currentStep === Step.Review && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle className="text-miracle-mediumBlue">Quotation Review</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {selectedComponentsForReview.length === 0 ? (
-              <div className="text-center text-miracle-darkGrey py-8">
-                No components selected for quotation. Please go back and select vendors.
-              </div>
-            ) : (
-              <div className="overflow-x-auto mb-6">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-miracle-lightGrey">
-                      <TableHead className="text-miracle-black">Identifier</TableHead>
-                      <TableHead className="text-miracle-black">Type</TableHead>
-                      <TableHead className="text-miracle-black">Value</TableHead>
-                      <TableHead className="text-miracle-black">Selected Vendor</TableHead>
-                      <TableHead className="text-right text-miracle-black">Price</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {selectedComponentsForReview.map((component) => {
-                      const selectedVendor = component.vendorOptions.find((v) => v.id === component.selectedVendorId)
-                      return (
-                        <TableRow key={component.id}>
-                          <TableCell className="font-medium text-miracle-black">{component.identifier}</TableCell>
-                          <TableCell className="text-miracle-black">{component.type}</TableCell>
-                          <TableCell className="text-miracle-black">{component.value}</TableCell>
-                          <TableCell className="text-miracle-black">
-                            {selectedVendor ? `${selectedVendor.name} (${selectedVendor.partNumber})` : "N/A"}
-                          </TableCell>
-                          <TableCell className="text-right text-miracle-black">
-                            {selectedVendor ? `$${selectedVendor.price.toFixed(2)}` : "$0.00"}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-            <div className="flex justify-end items-center gap-4 text-lg font-semibold text-miracle-black">
-              <span>Total Cost:</span>
-              <span className="text-miracle-darkBlue">${totalReviewCost}</span>
-            </div>
-            <div className="flex justify-between mt-6">
-              <Button
-                onClick={() => setCurrentStep(Step.Recognition)}
-                variant="outline"
-                className="border-miracle-darkBlue text-miracle-darkBlue hover:bg-miracle-darkBlue hover:text-miracle-white"
-              >
-                Back to Components
-              </Button>
-              <Button
-                onClick={handleGenerateQuotation}
-                disabled={isProcessing || selectedComponentsForReview.length === 0}
-                className="bg-miracle-red hover:bg-miracle-red/80 text-miracle-white"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...
-                  </>
-                ) : (
-                  "Generate Quotation"
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              {currentStep === Step.Review && (
+                <Card className="mb-6">
+                  <CardHeader>
+                    <CardTitle className="text-miracle-mediumBlue">Quotation Review</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {selectedComponentsForReview.length === 0 ? (
+                      <div className="text-center text-miracle-darkGrey py-8">
+                        No components selected for quotation. Please go back and select vendors.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto mb-6">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-miracle-lightGrey">
+                              <TableHead className="text-miracle-black">Identifier</TableHead>
+                              <TableHead className="text-miracle-black">Type</TableHead>
+                              <TableHead className="text-miracle-black">Value</TableHead>
+                              <TableHead className="text-miracle-black">Selected Vendor</TableHead>
+                              <TableHead className="text-right text-miracle-black">Price</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedComponentsForReview.map((component) => {
+                              const selectedVendor = component.vendorOptions.find(
+                                (v) => v.id === component.selectedVendorId,
+                              )
+                              return (
+                                <TableRow key={component.id}>
+                                  <TableCell className="font-medium text-miracle-black">
+                                    {component.identifier}
+                                  </TableCell>
+                                  <TableCell className="text-miracle-black">{component.type}</TableCell>
+                                  <TableCell className="text-miracle-black">{component.value}</TableCell>
+                                  <TableCell className="text-miracle-black">
+                                    {selectedVendor ? `${selectedVendor.name} (${selectedVendor.partNumber})` : "N/A"}
+                                  </TableCell>
+                                  <TableCell className="text-right text-miracle-black">
+                                    {selectedVendor ? `$${selectedVendor.price.toFixed(2)}` : "$0.00"}
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                    <div className="flex justify-end items-center gap-4 text-lg font-semibold text-miracle-black">
+                      <span>Total Cost:</span>
+                      <span className="text-miracle-darkBlue">${totalReviewCost}</span>
+                    </div>
+                    <div className="flex justify-between mt-6">
+                      <Button
+                        onClick={() => setCurrentStep(Step.Recognition)}
+                        variant="outline"
+                        className="border-miracle-darkBlue text-miracle-darkBlue hover:bg-miracle-darkBlue hover:text-miracle-white"
+                      >
+                        Back to Components
+                      </Button>
+                      <Button
+                        onClick={handleGenerateQuotation}
+                        disabled={isProcessing || selectedComponentsForReview.length === 0}
+                        className="bg-miracle-red hover:bg-miracle-red/80 text-miracle-white"
+                      >
+                        {isProcessing ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...
+                          </>
+                        ) : (
+                          "Generate Quotation"
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
-      {currentStep === Step.Confirmation && quotationSummary && (
-        <Card className="mb-6 text-center">
-          <CardHeader>
-            <CardTitle className="text-miracle-mediumBlue">Quotation Generated Successfully!</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CheckCircle className="w-20 h-20 text-miracle-lightBlue mx-auto mb-6" />
-            <p className="text-lg font-medium mb-4 text-miracle-black">
-              Your quotation for {quotationSummary.totalParts} parts, totaling ${quotationSummary.totalCost.toFixed(2)},
-              is ready.
-            </p>
-            <div className="flex flex-col md:flex-row justify-center gap-4 mb-6">
-              <Link href={quotationSummary.pdfUrl} target="_blank" rel="noopener noreferrer">
-                <Button className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white">
-                  <Download className="h-4 w-4 mr-2" /> Download PDF
-                </Button>
-              </Link>
-              <Link href={quotationSummary.excelUrl} target="_blank" rel="noopener noreferrer">
-                <Button className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white">
-                  <Download className="h-4 w-4 mr-2" /> Download Excel
-                </Button>
-              </Link>
-              <Link href={quotationSummary.jsonUrl} target="_blank" rel="noopener noreferrer">
-                <Button className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white">
-                  <Download className="h-4 w-4 mr-2" /> Download JSON
-                </Button>
-              </Link>
-            </div>
-            <Button
-              onClick={handleStartNewQuote}
-              variant="outline"
-              className="border-miracle-darkBlue text-miracle-darkBlue hover:bg-miracle-darkBlue hover:text-miracle-white bg-transparent"
-            >
-              Start New Quote
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+              {currentStep === Step.Confirmation && quotationSummary && (
+                <Card className="mb-6 text-center">
+                  <CardHeader>
+                    <CardTitle className="text-miracle-mediumBlue">Quotation Generated Successfully!</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CheckCircle className="w-20 h-20 text-miracle-lightBlue mx-auto mb-6" />
+                    <p className="text-lg font-medium mb-4 text-miracle-black">
+                      Your quotation for {quotationSummary.totalParts} parts, totaling $
+                      {quotationSummary.totalCost.toFixed(2)}, is ready.
+                    </p>
+                    <div className="flex flex-col md:flex-row justify-center gap-4 mb-6">
+                      <Link href={quotationSummary.pdfUrl} target="_blank" rel="noopener noreferrer">
+                        <Button className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white">
+                          <Download className="h-4 w-4 mr-2" /> Download PDF
+                        </Button>
+                      </Link>
+                      <Link href={quotationSummary.excelUrl} target="_blank" rel="noopener noreferrer">
+                        <Button className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white">
+                          <Download className="h-4 w-4 mr-2" /> Download Excel
+                        </Button>
+                      </Link>
+                      <Link href={quotationSummary.jsonUrl} target="_blank" rel="noopener noreferrer">
+                        <Button className="bg-miracle-darkBlue hover:bg-miracle-mediumBlue text-miracle-white">
+                          <Download className="h-4 w-4 mr-2" /> Download JSON
+                        </Button>
+                      </Link>
+                    </div>
+                    <Button
+                      onClick={handleStartNewQuote}
+                      variant="outline"
+                      className="border-miracle-darkBlue text-miracle-darkBlue hover:bg-miracle-darkBlue hover:text-miracle-white bg-transparent"
+                    >
+                      Start New Quote
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
 
-      {/* Error/Status Handling (using useToast, but showing a fallback for demonstration) */}
-      {currentStep !== Step.Confirmation && !isProcessing && components.length === 0 && files.length > 0 && (
-        <div className="text-center text-miracle-red py-8">
-          <XCircle className="w-12 h-12 mx-auto mb-4" />
-          <p className="text-lg font-medium">No components recognized or an error occurred.</p>
-          <p className="text-sm text-miracle-darkGrey">
-            Please ensure the file is clear and supported, then try again.
-          </p>
-          <Button
-            onClick={handleStartNewQuote}
-            className="mt-4 bg-miracle-red hover:bg-miracle-red/80 text-miracle-white"
-          >
-            Try Again
-          </Button>
-        </div>
+              {/* Error/Status Handling (using useToast, but showing a fallback for demonstration) */}
+              {currentStep !== Step.Confirmation && !isProcessing && components.length === 0 && files.length > 0 && (
+                <div className="text-center text-miracle-red py-8">
+                  <XCircle className="w-12 h-12 mx-auto mb-4" />
+                  <p className="text-lg font-medium">No components recognized or an error occurred.</p>
+                  <p className="text-sm text-miracle-darkGrey">
+                    Please ensure the file is clear and supported, then try again.
+                  </p>
+                  <Button
+                    onClick={handleStartNewQuote}
+                    className="mt-4 bg-miracle-red hover:bg-miracle-red/80 text-miracle-white"
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
+            <LoadingSkeleton /> // Show skeleton if dynamic content is not yet ready
+          )}
+        </Suspense>
       )}
     </div>
   )
